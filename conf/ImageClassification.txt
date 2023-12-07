@@ -1,0 +1,9 @@
+# Classification of images with ImageNet
+# When enabled, each item gets extra properties:
+# "image:classification:objects" - Detected objects (max. 20) in image, sorted by relevante descending
+
+# Directory where the task puts the files to process
+inputDirectory = ./data/input
+
+# Directory where the background task puts the results and where the tasks fetches them
+outputDirectory = ./data/output
