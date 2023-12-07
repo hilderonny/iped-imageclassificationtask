@@ -1,4 +1,5 @@
 ﻿# Transcription and translation of audio files
+# https://github.com/hilderonny/iped-imageclassificationtask
 # Configuration
 # =============
 # enabling: enableImageClassification
