@@ -1,5 +1,4 @@
 ﻿# Transcription and translation of audio files
-# https://github.com/hilderonny/iped-imageclassificationtask
 # Configuration
 # =============
 # enabling: enableImageClassification
@@ -11,6 +10,8 @@ import logging
 import json
 import shutil
 import stat
+import requests
+
 logging.basicConfig(format='%(asctime)s [%(levelname)s] [ImageClassificationTask.py] %(message)s', level=logging.DEBUG)
 
 # Configuration properties
@@ -18,9 +19,15 @@ enableProp = "enableImageClassification"
 configFile = "ImageClassification.txt"
 inputDirectoryProp = "inputDirectory"
 outputDirectoryProp = "outputDirectory"
+useForensicTaskBridgeProp = "useForensicTaskBridge"
+forensicTaskBridgeApiUrlProp = "forensicTaskBridgeApiUrl"
+forensicTaskBridgeShareDirectoryProp = "forensicTaskBridgeShareDirectory"
 
 INPUT_DIR = None
 OUTPUT_DIR = None
+USE_API = False
+API_URL = None
+API_SHARE_DIR = None
 
 def readJsonFile(file_path):
     with open(file_path, "r", encoding="utf-8") as json_file:
@@ -45,9 +52,12 @@ class ImageClassificationTask:
         if not ImageClassificationTask.enabled:
             return
         extraProps = taskConfig.getConfiguration()
-        global INPUT_DIR, OUTPUT_DIR
+        global INPUT_DIR, OUTPUT_DIR, USE_API, API_URL, API_SHARE_DIR
         INPUT_DIR = extraProps.getProperty(inputDirectoryProp)
         OUTPUT_DIR = extraProps.getProperty(outputDirectoryProp)
+        USE_API = True if extraProps.getProperty(useForensicTaskBridgeProp) == "true" else False
+        API_URL = extraProps.getProperty(forensicTaskBridgeApiUrlProp)
+        API_SHARE_DIR = extraProps.getProperty(forensicTaskBridgeShareDirectoryProp)
 
     def finish(self):
         return
@@ -82,7 +92,29 @@ class ImageClassificationTask:
 
         if not (media_type.startswith('image')):
             return
-        
+
+        if USE_API == True:
+            result = self.process_via_api(item, hash)
+        else:
+            result = self.process_locally(item, hash)
+
+        if "predictions" in result:
+            item.setExtraAttribute("image:classification:classes", result["predictions"])
+            #meta_data.set("image:classification:classes", str(result["predictions"]))
+        if "name" in result:
+            item.setExtraAttribute("image:classification:bestclass", result["name"])
+            #meta_data.set("image:classification:bestclass", str(result["name"]))
+        if "probability" in result:
+            item.setExtraAttribute("image:classification:probability", result["probability"])
+            #meta_data.set("image:classification:probability", str(result["probability"]))
+        logging.info("Processed item %s: %s", item_name, result)
+
+    # Result format
+    #   predictions []
+    #   name
+    #   probability
+
+    def process_locally(self, item, hash):
         source_file_path = item.getTempFile().getAbsolutePath()
 
         # Determine file name with hash
@@ -99,15 +131,36 @@ class ImageClassificationTask:
                 time.sleep(5)
         # Process result file and extract metadata
         result = readJsonFile(output_file_path)
+        return result
 
-        meta_data = item.getMetadata()
-        if "predictions" in result:
-            item.setExtraAttribute("image:classification:classes", result["predictions"])
-            #meta_data.set("image:classification:classes", str(result["predictions"]))
-        if "name" in result:
-            item.setExtraAttribute("image:classification:bestclass", result["name"])
-            #meta_data.set("image:classification:bestclass", str(result["name"]))
-        if "probability" in result:
-            item.setExtraAttribute("image:classification:probability", result["probability"])
-            #meta_data.set("image:classification:probability", str(result["probability"]))
-        logging.info("Processed item %s: %s", item_name, result)
+    def process_via_api(self, item, hash):
+        result = {}
+        # Copy file to share folder
+        source_file_path = item.getTempFile().getAbsolutePath()
+        share_file_path = os.path.join(API_SHARE_DIR, hash)
+        shutil.copy(source_file_path, share_file_path)
+        # Add classification task
+        response = requests.post(f"{API_URL}tasks/classifyimage/add/{hash}/de")
+        if response.status_code != 200:
+            logging.error(f"Cannot access {API_URL}tasks/classifyimage/add/{hash}/de")
+            return result
+        add_classification_json_result = response.json()
+        print(add_classification_json_result)
+        classification_task_id = add_classification_json_result["id"]
+        # Wait for completion
+        while requests.get(f"{API_URL}tasks/status/{classification_task_id}").json()["status"] != "done":
+            time.sleep(5)
+        classification_result = requests.get(f"{API_URL}tasks/result/{classification_task_id}").json()
+        print(classification_result)
+        if "error" in classification_result["result"]:
+            result["error"] = classification_result["result"]["error"]
+        else:
+            # Collect results
+            result["predictions"] = classification_result["result"]["predictions"]
+            result["name"] = classification_result["result"]["name"]
+            result["probability"] = classification_result["result"]["probability"]
+        # Delete task from bridge
+        delete_result = requests.delete(f"{API_URL}tasks/remove/{classification_task_id}")
+        print(delete_result)
+        print(result)
+        return result

@@ -7,3 +7,12 @@ inputDirectory = ./data/input
 
 # Directory where the background task puts the results and where the tasks fetches them
 outputDirectory = ./data/output
+
+# Use forensic task bridge server instead of loacal processing
+useForensicTaskBridge
+
+# URL of the API of the forensic task bridge in the format http://127.0.0.1:30000/api/
+forensicTaskBridgeApiUrl
+
+# Directory where the task puts the audio files to process when a forensic task bridge server is used
+forensicTaskBridgeShareDirectory
